@@ -1,0 +1,61 @@
+{
+  "name": "vitro",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Vitro \u2014 liquid-glass task triage overlay for the macOS menu bar",
+  "author": "Vitro",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run",
+    "native": "mkdir -p build && swiftc -O native/vitro-keyd.swift -o build/vitro-keyd",
+    "icons": "swift scripts/make-icons.swift",
+    "app": "npm run build && npm run native && electron .",
+    "dist": "npm run build && npm run native && electron-builder --mac --dir"
+  },
+  "build": {
+    "appId": "app.vitro.overlay",
+    "productName": "Vitro",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "build/vitro-keyd",
+        "to": "vitro-keyd"
+      }
+    ],
+    "mac": {
+      "target": "dir",
+      "icon": "build/icon.icns",
+      "category": "public.app-category.productivity",
+      "identity": "-",
+      "extendInfo": {
+        "LSUIElement": true
+      },
+      "hardenedRuntime": false
+    }
+  },
+  "dependencies": {
+    "motion": "^14.14.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "zustand": "^5.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "@vitejs/plugin-react": "^6.3.0",
+    "electron": "^45.3.2",
+    "electron-builder": "^26.18.0",
+    "tailwindcss": "^4.3.5",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
+  }
+}
