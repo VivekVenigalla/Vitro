@@ -9,6 +9,8 @@ const FALLBACK_SHORTCUT = 'Control+Alt+Space'
 const TOGGLE_DEBOUNCE_MS = 350
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+// Development: point at a separate profile so a test run never touches real tasks.
+if (process.env.VITRO_USER_DATA) app.setPath('userData', process.env.VITRO_USER_DATA)
 
 let win = null
 let tray = null
