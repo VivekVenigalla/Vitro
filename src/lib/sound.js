@@ -59,7 +59,7 @@ export const sound = {
     tone({ freq: 880, dur: 0.35, gain: 0.06 })
     tone({ freq: 1318.5, at: 0.09, dur: 0.5, gain: 0.06 })
   },
-  /** All steps of a shattered task done. */
+  /** Last step ticked off: the task finishes itself. */
   celebrate() {
     ;[659.25, 880, 1108.7, 1318.5].forEach((f, i) => tone({ freq: f, at: i * 0.085, dur: 0.6, gain: 0.05 }))
   },
@@ -68,18 +68,6 @@ export const sound = {
     tone({ freq: 587.33, dur: 1.2, gain: 0.08 })
     tone({ freq: 1174.66, dur: 0.9, gain: 0.03 })
     tone({ freq: 587.33, at: 0.55, dur: 1.4, gain: 0.07 })
-  },
-  /** Glass shatter. */
-  tink() {
-    noise({ dur: 0.07, gain: 0.09, freq: 6500, q: 0.8 })
-    tone({ freq: 2637, dur: 0.18, gain: 0.03, type: 'triangle' })
-    tone({ freq: 3520, at: 0.03, dur: 0.22, gain: 0.025, type: 'triangle' })
-    tone({ freq: 4186, at: 0.07, dur: 0.2, gain: 0.02, type: 'triangle' })
-  },
-  /** Shards re-fusing. */
-  fuse() {
-    tone({ freq: 420, to: 840, dur: 0.22, gain: 0.05 })
-    tone({ freq: 1260, at: 0.2, dur: 0.25, gain: 0.03 })
   },
   /** Cancel: soft falling thud. */
   thud() {

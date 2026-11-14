@@ -1,34 +1,92 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { classifyThrow, massFor, withMass, SPRING } from '../src/lib/physics'
-import { shatterPieces, slotPositions, clusterLayout, placeCluster, rectDist, centerPoint, CARD, SHARD, FUSE_DISTANCE, DROP_RADIUS, fracToPx, pxToFrac } from '../src/lib/geometry'
+import { classifyThrow, classifyRelease, directionOf, releaseVelocity, massFor, withMass, SPRING, COMMIT_DISTANCE } from '../src/lib/physics'
+import { slotPositions, rectDist, centerPoint, CARD, DROP_RADIUS, fracToPx, pxToFrac } from '../src/lib/geometry'
 import { useStore, sanitize, remainingOf, MINUTE } from '../src/store'
 
-const polar = (deg, speed) => [Math.cos((deg * Math.PI) / 180) * speed, Math.sin((deg * Math.PI) / 180) * speed]
+const polar = (deg, mag) => [Math.cos((deg * Math.PI) / 180) * mag, Math.sin((deg * Math.PI) / 180) * mag]
 
-describe('classifyThrow', () => {
-  it('returns to center below 700 px/s whatever the direction', () => {
-    for (const a of [-90, 0, 90, 180]) expect(classifyThrow(...polar(a, 699))).toBe('return')
-  })
+describe('throw direction', () => {
   it('done for up and right (-135°…45°)', () => {
-    for (const a of [-135, -90, -45, 0, 45]) expect(classifyThrow(...polar(a, 900))).toBe('done')
+    for (const a of [-135, -90, -45, 0, 45]) expect(directionOf(...polar(a, 1))).toBe('done')
   })
   it('cancel for straight down (60°…120°)', () => {
-    for (const a of [60, 90, 120]) expect(classifyThrow(...polar(a, 900))).toBe('cancel')
+    for (const a of [60, 90, 120]) expect(directionOf(...polar(a, 1))).toBe('cancel')
   })
-  it('snooze for leftward throws', () => {
-    for (const a of [121, 150, 180, -180, -160, -136]) expect(classifyThrow(...polar(a, 900))).toBe('snooze')
+  it('snooze for leftward', () => {
+    for (const a of [121, 150, 180, -180, -160, -136]) expect(directionOf(...polar(a, 1))).toBe('snooze')
   })
-  it('the 45°–60° sliver is ambiguous and never dismisses', () => {
-    expect(classifyThrow(...polar(52, 2000))).toBe('return')
+  it('the 45°–60° sliver has no direction', () => {
+    expect(directionOf(...polar(52, 1))).toBeNull()
+    expect(directionOf(0, 0)).toBeNull()
+  })
+})
+
+describe('classifyThrow (velocity only)', () => {
+  it('needs 700 px/s', () => {
+    expect(classifyThrow(...polar(-90, 699))).toBe('return')
+    expect(classifyThrow(...polar(-90, 701))).toBe('done')
+    expect(classifyThrow(...polar(90, 900))).toBe('cancel')
+    expect(classifyThrow(...polar(180, 900))).toBe('snooze')
+  })
+})
+
+describe('classifyRelease', () => {
+  it('a fast flick wins regardless of where the orb is', () => {
+    expect(classifyRelease({ dx: 0, dy: 0, vx: 0, vy: 900 })).toBe('cancel')
+    expect(classifyRelease({ dx: -200, dy: 0, vx: 900, vy: -900 })).toBe('done')
+  })
+  it('a slow release past the commit ring goes the way it was dragged', () => {
+    expect(classifyRelease({ dx: COMMIT_DISTANCE + 1, dy: 0, vx: 0, vy: 0 })).toBe('done')
+    expect(classifyRelease({ dx: 0, dy: COMMIT_DISTANCE + 1, vx: 0, vy: 0 })).toBe('cancel')
+    expect(classifyRelease({ dx: -(COMMIT_DISTANCE + 1), dy: 0, vx: 10, vy: 0 })).toBe('snooze')
+  })
+  it('a slow release inside the ring springs back', () => {
+    expect(classifyRelease({ dx: COMMIT_DISTANCE - 1, dy: 0, vx: 300, vy: 0 })).toBe('return')
+  })
+  it('the ambiguous sliver never dismisses on distance alone', () => {
+    const [dx, dy] = polar(52, 400)
+    expect(classifyRelease({ dx, dy, vx: 0, vy: 0 })).toBe('return')
+  })
+})
+
+describe('releaseVelocity', () => {
+  // A flick that decelerates sharply in its last frames, like a real hand.
+  const flick = () => {
+    const pts = []
+    let x = 0
+    let t = 0
+    const speeds = [0.5, 1.5, 2.5, 3, 3, 2.5, 1.2, 0.4, 0.15, 0.05] // px per ms per 16ms frame
+    pts.push({ t, x, y: 0 })
+    for (const s of speeds) {
+      t += 16
+      x += s * 16
+      pts.push({ t, x, y: 0 })
+    }
+    return { pts, end: t + 8 }
+  }
+  it('captures the peak of a flick that slows before release', () => {
+    const { pts, end } = flick()
+    const v = releaseVelocity(pts, end)
+    expect(v.x).toBeGreaterThan(1500)
+    // the last 40ms alone would read as a crawl
+    const last = pts.slice(-3)
+    expect(((last[2].x - last[0].x) / (last[2].t - last[0].t)) * 1000).toBeLessThan(700)
+  })
+  it('is zero when the pointer was held still before letting go', () => {
+    const { pts, end } = flick()
+    expect(releaseVelocity(pts, end + 300)).toEqual({ x: 0, y: 0 })
+  })
+  it('handles too few samples', () => {
+    expect(releaseVelocity([], 0)).toEqual({ x: 0, y: 0 })
+    expect(releaseVelocity([{ t: 0, x: 0, y: 0 }], 5)).toEqual({ x: 0, y: 0 })
   })
 })
 
 describe('mass', () => {
-  it('maps priority to 1.0–1.8 and shards to 0.8', () => {
+  it('maps priority to 1.0–1.8', () => {
     expect(massFor({ priority: 0 })).toBe(1)
     expect(massFor({ priority: 1 })).toBe(1.4)
     expect(massFor({ priority: 2 })).toBe(1.8)
-    expect(massFor({ priority: 2, parentId: 'p' })).toBe(0.8)
   })
   it('leaves the spring tiers untouched at mass 1', () => {
     expect(withMass(SPRING.cascade, 1)).toEqual(SPRING.cascade)
@@ -37,28 +95,7 @@ describe('mass', () => {
 })
 
 describe('geometry', () => {
-  it('shatter pieces tile the card with 8-vertex polygons', () => {
-    for (const n of [2, 3, 4]) {
-      const pieces = shatterPieces(n, CARD.w, CARD.h, 42 + n)
-      expect(pieces).toHaveLength(n)
-      let area = 0
-      for (const p of pieces) {
-        expect(p.poly).toHaveLength(8)
-        const pts = p.poly.map(([x, y]) => [p.box.x + (x / 100) * p.box.w, p.box.y + (y / 100) * p.box.h])
-        let a = 0
-        for (let i = 0; i < pts.length; i++) {
-          const [x1, y1] = pts[i]
-          const [x2, y2] = pts[(i + 1) % pts.length]
-          a += x1 * y2 - x2 * y1
-        }
-        area += Math.abs(a / 2)
-        expect(p.box.x).toBeGreaterThanOrEqual(-0.001)
-        expect(p.box.x + p.box.w).toBeLessThanOrEqual(CARD.w + 0.001)
-      }
-      expect(area).toBeCloseTo(CARD.w * CARD.h, 3)
-    }
-  })
-  it('slots stay on screen and clear of the focus zone', () => {
+  it('slots stay on screen, never overlap and stay clear of the focus zone', () => {
     for (const [W, H] of [[1440, 900], [1280, 720], [1920, 1080], [900, 640]]) {
       const slots = slotPositions(W, H, 28)
       const c = centerPoint(W, H, 28)
@@ -72,39 +109,6 @@ describe('geometry', () => {
       for (let i = 0; i < slots.length; i++)
         for (let j = i + 1; j < slots.length; j++)
           expect(rectDist({ ...slots[i], ...CARD }, { ...slots[j], ...CARD })).toBeGreaterThan(0)
-    }
-  })
-  it('scattered shards rest farther apart than the fuse distance', () => {
-    for (const n of [2, 3, 4]) {
-      const pts = clusterLayout(n, 140, 80, 1440, 900, 28)
-      for (let i = 0; i < n; i++) {
-        expect(pts[i].x).toBeGreaterThanOrEqual(0)
-        for (let j = i + 1; j < n; j++)
-          expect(rectDist({ ...pts[i], ...SHARD }, { ...pts[j], ...SHARD })).toBeGreaterThan(FUSE_DISTANCE)
-      }
-    }
-  })
-  it('placed shard clusters avoid neighbouring cards and the focus zone', () => {
-    const W = 1440, H = 900, top = 28
-    const slots = slotPositions(W, H, top)
-    const c = centerPoint(W, H, top)
-    for (let parent = 0; parent < 8; parent++) {
-      const obstacles = slots.slice(0, 8).filter((_, i) => i !== parent).map((s) => ({ x: s.x, y: s.y, ...CARD }))
-      for (const n of [2, 3, 4]) {
-        const pts = placeCluster(n, { x: slots[parent].x, y: slots[parent].y, ...CARD }, obstacles, W, H, top)
-        expect(pts).toHaveLength(n)
-        for (const pt of pts) {
-          const box = { ...pt, ...SHARD }
-          for (const ob of obstacles) expect(rectDist(box, ob)).toBeGreaterThan(0)
-          expect(Math.hypot(pt.x + SHARD.w / 2 - c.x, pt.y + SHARD.h / 2 - c.y)).toBeGreaterThan(DROP_RADIUS)
-          expect(pt.x).toBeGreaterThanOrEqual(0)
-          expect(pt.x + SHARD.w).toBeLessThanOrEqual(W)
-          expect(pt.y + SHARD.h).toBeLessThanOrEqual(H)
-        }
-        for (let i = 0; i < n; i++)
-          for (let j = i + 1; j < n; j++)
-            expect(rectDist({ ...pts[i], ...SHARD }, { ...pts[j], ...SHARD })).toBeGreaterThan(FUSE_DISTANCE)
-      }
     }
   })
   it('fraction positions round-trip', () => {
@@ -121,12 +125,9 @@ describe('store', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T10:00:00Z'))
-    useStore.setState({ tasks: {}, focusId: null, toast: null, fusing: null, births: {}, fx: [], hydrated: false })
+    useStore.setState({ tasks: {}, focusId: null, toast: null, fx: [], autoFinish: null, throwIntent: null, hydrated: false })
     S().hydrate(null)
   })
-  const shatter = (t) =>
-    S().shatter(t.id, t.subtasks.filter((s) => s.status === 'todo').map((s, i) => ({ subId: s.id, shape: i, pos: { fx: 0.2 + i * 0.1, fy: 0.3 }, birth: { box: { x: 0, y: 0, w: 10, h: 10 }, poly: [] } })))
-  const shardsOf = (id) => Object.values(S().tasks).filter((t) => t.parentId === id)
 
   it('seeds example tasks with unique slots on first run', () => {
     const tasks = Object.values(S().tasks)
@@ -171,10 +172,10 @@ describe('store', () => {
     expect(S().tasks[a.id].pos).toBeNull()
     expect(S().tasks[a.id].timer.elapsedMs).toBe(5_000)
   })
-  it('done / cancel move the task to the log, and undo brings it back', () => {
+  it('done / cancel move the task to the log; undo and restore bring it back', () => {
     const a = find('Book a dentist appointment')
     S().focus(a.id)
-    S().resolve(a.id, 'done')
+    expect(S().resolve(a.id, 'done')).toBe(true)
     expect(S().tasks[a.id].status).toBe('done')
     expect(S().focusId).toBeNull()
     S().undo()
@@ -184,65 +185,27 @@ describe('store', () => {
     expect(S().tasks[a.id].status).toBe('cancelled')
     S().restore(a.id)
     expect(S().tasks[a.id].status).toBe('active')
+    expect(S().resolve('nope', 'done')).toBe(false)
   })
-  it('shatters into one shard per open step, with mass 0.8', () => {
-    const p = find('Ship the Q4 roadmap draft')
-    expect(shatter(p)).toBe(true)
-    const shards = shardsOf(p.id)
-    expect(shards.map((s) => s.title).sort()).toEqual(['Estimate effort', 'Outline milestones', 'Write the summary'])
-    expect(S().tasks[p.id].shattered).toBe(true)
-    expect(massFor(shards[0])).toBe(0.8)
-  })
-  it('refuses to shatter a focused task or one with fewer than 2 open steps', () => {
-    const p = find('Ship the Q4 roadmap draft')
+  it('ticking the last step of the focused task flags it to finish', () => {
+    const p = find('Reply to the design review')
     S().focus(p.id)
-    expect(shatter(p)).toBe(false)
-    const lone = find('Book a dentist appointment')
-    expect(S().shatter(lone.id, [])).toBe(false)
+    const [a, b] = p.subtasks
+    S().toggleStep(p.id, a.id)
+    expect(S().autoFinish).toBeNull()
+    S().toggleStep(p.id, b.id)
+    expect(S().autoFinish).toBe(p.id)
+    // unticking cancels the pending finish
+    S().toggleStep(p.id, b.id)
+    expect(S().autoFinish).toBeNull()
   })
-  it('completes the parent automatically once every shard is done', () => {
+  it('ticking steps on an unfocused task never auto-finishes it', () => {
     const p = find('Reply to the design review')
-    shatter(p)
-    const [a, b] = shardsOf(p.id)
-    expect(S().resolve(a.id, 'done').parentCompleted).toBeNull()
-    expect(S().tasks[p.id].status).toBe('active')
-    expect(S().resolve(b.id, 'done').parentCompleted).toBe(p.id)
-    expect(S().tasks[p.id].status).toBe('done')
-    expect(shardsOf(p.id)).toHaveLength(0)
+    for (const s of p.subtasks) S().toggleStep(p.id, s.id)
+    expect(S().autoFinish).toBeNull()
+    expect(S().tasks[p.id].subtasks.every((s) => s.status === 'done')).toBe(true)
   })
-  it('a parent whose shards were all cancelled is cancelled, not completed', () => {
-    const p = find('Reply to the design review')
-    shatter(p)
-    for (const s of shardsOf(p.id)) S().resolve(s.id, 'cancelled')
-    expect(S().tasks[p.id].status).toBe('cancelled')
-  })
-  it('re-fuses shards into the parent and keeps finished steps', () => {
-    const p = find('Ship the Q4 roadmap draft')
-    shatter(p)
-    const first = shardsOf(p.id)[0]
-    S().resolve(first.id, 'done')
-    const pieces = Object.fromEntries(shardsOf(p.id).map((s) => [s.id, { box: {}, poly: [] }]))
-    S().beginFuse(p.id, pieces, { fx: 0.4, fy: 0.4 })
-    expect(S().fusing.parentId).toBe(p.id)
-    vi.advanceTimersByTime(500)
-    expect(S().fusing).toBeNull()
-    expect(shardsOf(p.id)).toHaveLength(0)
-    const parent = S().tasks[p.id]
-    expect(parent.shattered).toBe(false)
-    expect(parent.pos).toEqual({ fx: 0.4, fy: 0.4 })
-    expect(parent.subtasks.filter((s) => s.status === 'done')).toHaveLength(1)
-    // …and it can be shattered again into just the two open steps
-    expect(shatter(S().tasks[p.id])).toBe(true)
-    expect(shardsOf(p.id)).toHaveLength(2)
-  })
-  it('renaming a shard renames its step on the parent', () => {
-    const p = find('Reply to the design review')
-    shatter(p)
-    const sh = shardsOf(p.id)[0]
-    S().updateTask(sh.id, { title: 'Skim the thread' })
-    expect(S().tasks[p.id].subtasks.find((s) => s.id === sh.subId).title).toBe('Skim the thread')
-  })
-  it('stops the clock at zero and flags the timer as notified', () => {
+  it('stops the clock at zero and +5 min restarts it', () => {
     const a = find('Book a dentist appointment')
     S().focus(a.id)
     vi.advanceTimersByTime(16 * MINUTE)
@@ -253,21 +216,21 @@ describe('store', () => {
     expect(remainingOf(S().tasks[a.id])).toBe(5 * MINUTE)
     expect(S().tasks[a.id].timer.startedAt).not.toBeNull()
   })
-  it('sanitize repairs orphan shards, bad focus and running timers', () => {
+  it('sanitize repairs bad focus, running timers, duplicate slots and old shards', () => {
     const now = Date.now()
     const clean = sanitize({
       beat: now - 60_000,
       focusId: 'ghost',
       tasks: {
         a: { id: 'a', title: 'A', slot: 0, timer: { elapsedMs: 0, startedAt: now - 120_000 } },
-        b: { id: 'b', title: 'B', slot: 0 },
-        orphan: { id: 'orphan', title: 'x', parentId: 'nope', pos: { fx: 0.1, fy: 0.1 } },
-        c: { id: 'c', title: 'C', slot: 2, shattered: true },
+        b: { id: 'b', title: 'B', slot: 0, shattered: true, subtasks: [{ id: 's1', title: 'x', status: 'skipped' }] },
+        shard: { id: 'shard', title: 'x', parentId: 'b', pos: { fx: 0.1, fy: 0.1 } },
       },
     })
     expect(clean.focusId).toBeNull()
-    expect(clean.tasks.orphan).toBeUndefined()
-    expect(clean.tasks.c.shattered).toBe(false)
+    expect(clean.tasks.shard).toBeUndefined()
+    expect(clean.tasks.b.shattered).toBeUndefined()
+    expect(clean.tasks.b.subtasks[0].status).toBe('todo')
     expect(clean.tasks.a.timer.startedAt).toBeNull()
     expect(clean.tasks.a.timer.elapsedMs).toBe(60_000)
     expect(clean.tasks.a.slot).not.toBe(clean.tasks.b.slot)

@@ -22,7 +22,7 @@ function ago(ts) {
 export function LogPanel() {
   const tasks = useStore((s) => s.tasks)
   const list = Object.values(tasks)
-    .filter((t) => t.status !== 'active' && !t.parentId)
+    .filter((t) => t.status !== 'active')
     .sort((a, b) => (b.resolvedAt || 0) - (a.resolvedAt || 0))
   const s = useStore.getState()
   return (
@@ -34,7 +34,7 @@ export function LogPanel() {
         )}
       </div>
       {list.length === 0 ? (
-        <div className="panel-empty">Nothing here yet. Throw a focused task up or right to finish it.</div>
+        <div className="panel-empty">Nothing here yet. Flick a focused task up or right to finish it.</div>
       ) : (
         <ul className="log-list">
           {list.map((t) => (
@@ -52,15 +52,15 @@ export function LogPanel() {
 }
 
 const GESTURES = [
-  ['Summon / dismiss', isApp ? 'Double-tap ⌥ Option, or click the menu-bar icon' : 'Double-tap ⌥ Option (Alt), or click the menu-bar icon'],
+  ['Summon / dismiss', isApp ? 'Double-tap ⌥ Option, ⌃⌥Space, or click the menu-bar icon' : 'Double-tap ⌥ Option (Alt), or click the menu-bar icon'],
   ['Focus', 'Drag a card to the center and let go'],
-  ['Done', 'Throw the orb up or right'],
-  ['Cancel', 'Throw the orb straight down'],
-  ['Snooze', 'Throw the orb left'],
+  ['Done', 'Flick the orb up or right'],
+  ['Cancel', 'Flick the orb down'],
+  ['Snooze', 'Flick the orb left'],
+  ['Gentler throw', 'Drag the orb past the ring until a label lights up, then let go'],
   ['Pause / resume', 'Click the orb'],
-  ['Shatter into steps', '⌥ Option-click a card that has 2–4 steps'],
-  ['Re-fuse', 'Drop a shard next to a sibling shard'],
-  ['Rename', 'Double-click a card or shard'],
+  ['Steps', 'Tick them off under the orb. The last one finishes the task'],
+  ['Rename', 'Double-click a card'],
   ['New task', 'Press / or N, type, Return'],
 ]
 

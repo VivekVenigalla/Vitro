@@ -177,7 +177,6 @@ input:focus-visible {
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.4), inset 0 -1px 1px rgba(0, 0, 0, 0.2);
 }
 .glass-card,
-.glass-shard,
 .glass-orb {
   position: absolute;
   inset: 0;
@@ -186,7 +185,6 @@ input:focus-visible {
   transition: background 0.2s, border-color 0.2s;
 }
 .glass-card.is-lifted,
-.glass-shard.is-lifted,
 .glass-orb.is-lifted { cursor: grabbing; border-color: rgba(255, 255, 255, 0.42); }
 .glass-card::before,
 .glass-orb::before {
@@ -197,11 +195,6 @@ input:focus-visible {
   border-radius: inherit;
   background: linear-gradient(160deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0) 32%);
   pointer-events: none;
-}
-.glass-shard {
-  border: 0;
-  background: linear-gradient(120deg, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0.12) 55%, rgba(186, 230, 253, 0.22) 100%);
-  box-shadow: none;
 }
 .glass-orb {
   background: radial-gradient(circle at 50% 38%, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.05) 70%);
@@ -240,15 +233,6 @@ input:focus-visible {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-}
-.shard-title {
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.25;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .title-input {
   display: block;
@@ -321,13 +305,18 @@ input:focus-visible {
   color: rgba(255, 255, 255, 0.8);
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
 }
-.orb-controls {
+.orb-below {
   position: absolute;
-  top: calc(100% + 16px);
+  top: calc(100% + 18px);
   left: 50%;
-  width: max-content;
-  margin-left: -170px;
-  min-width: 340px;
+  width: 360px;
+  margin-left: -180px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.orb-controls {
   display: flex;
   justify-content: center;
   gap: 6px;
@@ -348,6 +337,137 @@ input:focus-visible {
 .orb-controls button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.28); }
 .orb-controls button:disabled { opacity: 0.4; }
 .orb-controls .sep { width: 8px; }
+.orb-controls .ctl-done:hover:not(:disabled) { background: rgba(52, 211, 153, 0.34); }
+.orb-controls .ctl-cancel:hover:not(:disabled) { background: rgba(251, 113, 133, 0.32); }
+
+/* steps checklist under the orb */
+.orb-steps {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  width: 300px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  -webkit-backdrop-filter: blur(30px) saturate(150%);
+  backdrop-filter: blur(30px) saturate(150%);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.3), 0 16px 36px -14px rgba(0, 0, 0, 0.45);
+}
+.orb-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+.orb-step:hover { background: rgba(255, 255, 255, 0.12); }
+.orb-check {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
+  transition: background 0.2s, border-color 0.2s, transform 0.2s;
+}
+.orb-step.is-done .orb-check { background: #6ee7b7; border-color: transparent; color: #064e3b; transform: scale(1.05); }
+.orb-step-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orb-step.is-done .orb-step-label { color: var(--ink-3); text-decoration: line-through; text-decoration-color: rgba(255, 255, 255, 0.35); }
+
+/* intent glow around the orb while it is held */
+.orb-glow {
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s, box-shadow 0.18s;
+}
+.orb-glow.is-done { --glow: 52, 211, 153; }
+.orb-glow.is-cancel { --glow: 251, 113, 133; }
+.orb-glow.is-snooze { --glow: 125, 211, 252; }
+.orb-glow[class*='is-'] { opacity: 0.45; box-shadow: 0 0 40px 6px rgba(var(--glow), 0.55); }
+.orb-glow.is-committed { opacity: 1; box-shadow: 0 0 0 2.5px rgba(var(--glow), 0.9), 0 0 70px 14px rgba(var(--glow), 0.6); }
+
+/* throw guides */
+.commit-ring {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 50%;
+  border: 1.5px dashed rgba(255, 255, 255, 0.28);
+  transition: border-color 0.18s, box-shadow 0.18s;
+}
+.commit-ring.is-done { border: 1.5px solid rgba(52, 211, 153, 0.75); }
+.commit-ring.is-cancel { border: 1.5px solid rgba(251, 113, 133, 0.75); }
+.commit-ring.is-snooze { border: 1.5px solid rgba(125, 211, 252, 0.75); }
+.compass-pill {
+  position: absolute;
+  transform: translate(-50%, -50%) scale(0.96);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 17px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--ink-2);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
+  transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1.4), background 0.18s, color 0.18s, border-color 0.18s, box-shadow 0.18s;
+}
+.compass-pill.is-done { --tone: 52, 211, 153; }
+.compass-pill.is-cancel { --tone: 251, 113, 133; }
+.compass-pill.is-snooze { --tone: 125, 211, 252; }
+.compass-arrow { font-size: 15px; line-height: 1; color: rgb(var(--tone)); }
+.compass-pill.is-active { color: var(--ink); border-color: rgba(var(--tone), 0.6); transform: translate(-50%, -50%) scale(1.04); }
+.compass-pill.is-committed {
+  color: #fff;
+  background: rgba(var(--tone), 0.42);
+  border-color: rgba(var(--tone), 0.95);
+  box-shadow: 0 0 34px rgba(var(--tone), 0.55);
+  transform: translate(-50%, -50%) scale(1.14);
+}
+.compass-pill.is-committed .compass-arrow { color: #fff; }
+.compass-hint {
+  margin-left: 2px;
+  padding: 2px 7px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* card progress hairline */
+.card-progress {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 7px;
+  height: 2px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+.card-progress i {
+  display: block;
+  height: 100%;
+  border-radius: 1px;
+  background: linear-gradient(90deg, #7dd3fc, #fcd34d);
+  transition: width 0.4s ease;
+}
+.meta-warn { color: #fcd34d; }
 
 .liquid-level { transition: transform 1s linear; }
 .liquid-fill { transition: fill 1s linear; }
@@ -387,12 +507,6 @@ input:focus-visible {
   border-radius: 50%;
   border: 2px solid rgba(255, 255, 255, 0.8);
   box-shadow: 0 0 24px rgba(125, 211, 252, 0.55), inset 0 0 24px rgba(125, 211, 252, 0.3);
-}
-.fx-shatter {
-  position: absolute;
-  border-radius: 24px;
-  background: radial-gradient(ellipse at center, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.25) 70%);
-  box-shadow: 0 0 50px rgba(255, 255, 255, 0.6);
 }
 .fx-spark {
   position: absolute;

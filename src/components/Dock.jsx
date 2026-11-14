@@ -14,7 +14,7 @@ export default function Dock() {
   const input = useRef(null)
   const panel = useStore((s) => s.panel)
   const soundOn = useStore((s) => s.settings.sound)
-  const resolvedCount = useStore((s) => Object.values(s.tasks).filter((t) => t.status !== 'active' && !t.parentId).length)
+  const resolvedCount = useStore((s) => Object.values(s.tasks).filter((t) => t.status !== 'active').length)
 
   // "/" or "n" jumps to the composer from anywhere in the overlay.
   useEffect(() => {

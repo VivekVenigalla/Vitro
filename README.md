@@ -33,34 +33,38 @@ On release the card morphs into the Focus Orb and its timer starts. The liquid
 drains as time passes and shifts from cyan through green to amber. Click the
 orb to pause or resume.
 
-![Focus Orb half drained, with shards and cards around it](docs/images/focus.jpg)
+![Focus Orb half drained, with cards around it](docs/images/focus.jpg)
 
 ### Triage by throwing
 
-| Throw the orb | Result |
+Grab the orb and either flick it, or drag it past the ring until a label lights
+up and let go. The labels show where each direction goes, and the orb glows in
+the color of what will happen.
+
+![Holding the orb past the ring: Done is lit with "Let go"](docs/images/throw.jpg)
+
+| Direction | Result |
 | --- | --- |
 | Up or right | Done |
 | Straight down | Cancel |
 | Left | Snooze back to the edge, progress kept |
-| Slower than 700 px/s | Springs back to center |
+| A small nudge | Springs back to center |
 
 The buttons under the orb do the same things. Every done or cancel shows an
 Undo toast, and the ✓ in the dock opens a log where you can restore tasks.
 
-### Shatter into steps
+### Steps
 
-⌥ Option-click a card that has 2–4 steps and it fractures into one shard per
-step. Each shard is a task of its own: drag it to the center to focus it.
+A task's steps appear as a checklist under the orb while you focus it. Ticking
+off the last one finishes the task with a small celebration.
 
-![A card shattered into three step shards](docs/images/shatter.jpg)
+![Focused task with its steps listed under the orb](docs/images/steps.jpg)
 
-- Finish every shard and the parent completes on its own.
-- Drop a shard next to a sibling to re-fuse them into the parent card.
-- Double-click a card or shard to rename it.
+Double-click a card to rename it.
 
 ### Edit a task
 
-Hover a card and click ⋯ to set its title, priority, focus length and steps.
+Hover a card and click ⋯ to set its title, priority, focus length and up to six steps.
 Priority is also weight: urgent tasks tilt less, glide farther and take longer
 to settle.
 
@@ -99,10 +103,10 @@ profile and leave your real tasks alone.
 
 ## Layout
 
-- `src/store.js`: tasks, timers, shatter and re-fuse, undo, persistence
-- `src/lib/physics.js`: spring tiers, mass per priority, throw classifier
-- `src/lib/geometry.js`: edge slots, shatter polygons, shard placement
-- `src/components/TaskBody.jsx`: card, shard and Focus Orb as one persistent element
+- `src/store.js`: tasks, timers, steps, undo, persistence
+- `src/lib/physics.js`: spring tiers, mass per priority, throw classifier, release velocity
+- `src/lib/geometry.js`: edge slots and screen layout
+- `src/components/TaskBody.jsx`: card and Focus Orb as one persistent element
 - `src/components/Liquid.jsx`: SVG gooey liquid timer
 - `electron/`: menu-bar item, transparent overlay window, notifications
 - `native/vitro-keyd.swift`: global double-tap Option detector, no permissions needed

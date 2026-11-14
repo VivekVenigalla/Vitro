@@ -29,18 +29,6 @@ export default function FX() {
             </div>
           )
         }
-        if (f.type === 'shatter') {
-          return (
-            <motion.div
-              key={f.id}
-              className="fx-shatter"
-              style={{ left: f.x, top: f.y, width: f.w, height: f.h }}
-              initial={{ opacity: 0.85, scale: 1 }}
-              animate={{ opacity: 0, scale: 1.12 }}
-              transition={{ duration: 0.4, ease: 'easeOut' }}
-            />
-          )
-        }
         if (f.type === 'celebrate') {
           return (
             <div key={f.id} className="absolute" style={{ left: f.x, top: f.y }}>

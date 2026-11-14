@@ -4,7 +4,7 @@ import { useStore, MINUTE, MAX_STEPS } from '../store'
 const PRIORITIES = ['Low', 'Normal', 'Urgent']
 const PRESETS = [15, 25, 45, 60]
 
-/** Task sheet: title, priority (mass), focus length, and the 2–4 steps a card shatters into. */
+/** Task sheet: title, priority (mass), focus length, and the steps shown under the orb. */
 export default function Editor({ task }) {
   const s = useStore.getState()
   const minutes = Math.round(task.durationMs / MINUTE)
@@ -74,21 +74,21 @@ export default function Editor({ task }) {
 
       <div className="sheet-steps">
         <div className="sheet-label">
-          Steps <span className="sheet-note">Option-click the card to shatter it into these</span>
+          Steps <span className="sheet-note">Tick them off under the orb while you focus</span>
         </div>
         {task.subtasks.map((sub, i) => (
           <div className="step" key={sub.id}>
             <button
-              className={`step-check ${sub.status !== 'todo' ? 'is-done' : ''}`}
+              className={`step-check ${sub.status === 'done' ? 'is-done' : ''}`}
               aria-label={sub.status === 'todo' ? `Mark step ${i + 1} done` : `Reopen step ${i + 1}`}
               title={sub.status === 'todo' ? 'Mark done' : 'Reopen'}
-              onClick={() => s.updateStep(task.id, sub.id, { status: sub.status === 'todo' ? 'done' : 'todo' })}
+              onClick={() => s.toggleStep(task.id, sub.id)}
             >
-              {sub.status !== 'todo' && <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M2 5.2 4.2 7.5 8 2.8" /></svg>}
+              {sub.status === 'done' && <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M2 5.2 4.2 7.5 8 2.8" /></svg>}
             </button>
             <input
               data-step="1"
-              className={sub.status !== 'todo' ? 'is-done' : ''}
+              className={sub.status === 'done' ? 'is-done' : ''}
               placeholder={`Step ${i + 1}`}
               aria-label={`Step ${i + 1}`}
               maxLength={120}
