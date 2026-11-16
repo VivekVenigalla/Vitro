@@ -24,6 +24,7 @@ let shownAt = 0
 let hideTimer = null
 let fadeTimer = null
 let quitting = false
+const notes = new Set()
 
 if (!app.requestSingleInstanceLock()) {
   app.quit()
@@ -79,8 +80,16 @@ function start() {
   ipcMain.on('notify', (_e, payload) => {
     if (!Notification.isSupported() || !payload) return
     const n = new Notification({ title: String(payload.title || 'Vitro'), body: String(payload.body || ''), silent: true })
-    n.on('click', () => show())
+    const id = payload.id ? String(payload.id) : null
+    n.on('click', () => {
+      if (win && !win.isDestroyed()) win.webContents.send('notify:click', id)
+      show()
+    })
     n.show()
+    // Keep a reference until macOS is done with it, or the click handler can be collected.
+    notes.add(n)
+    n.on('close', () => notes.delete(n))
+    setTimeout(() => notes.delete(n), 10 * 60_000)
   })
 }
 

@@ -4,6 +4,7 @@ import { useStore, remainingOf, isRunning, saveNow } from './store'
 import { platform, isApp } from './lib/platform'
 import { sound } from './lib/sound'
 import { fmtClock } from './lib/time'
+import { describeRepeat } from './lib/schedule'
 import Overlay from './components/Overlay'
 import { GooDefs } from './components/Liquid'
 import { Mesh, MenuBar } from './components/Desktop'
@@ -67,6 +68,32 @@ function useDoubleOption(onFire) {
   }, [])
 }
 
+/** Notify about routines that just came due (one summary for anything that came due while Vitro was away). */
+function announce(events) {
+  if (!events.length) return
+  const s = useStore.getState()
+  const now = events.filter((e) => !e.late)
+  const late = events.filter((e) => e.late)
+  for (const e of now) {
+    const t = s.tasks[e.id]
+    if (!t) continue
+    platform.notify({
+      id: t.id,
+      title: t.title,
+      body: e.kind === 'carried' ? 'Still to do from last time · carried over' : `Time for this · ${describeRepeat(t.repeat)}`,
+    })
+  }
+  if (late.length) {
+    const names = late.map((e) => s.tasks[e.id]?.title).filter(Boolean)
+    platform.notify({
+      id: late.length === 1 ? late[0].id : null,
+      title: late.length === 1 ? names[0] : `${late.length} routines are waiting`,
+      body: late.length === 1 ? 'Waiting for you in Vitro' : names.join(' · '),
+    })
+  }
+  sound.nudge()
+}
+
 export default function App() {
   const hydrated = useStore((s) => s.hydrated)
   const open = useStore((s) => s.open)
@@ -80,6 +107,7 @@ export default function App() {
     platform.load().then((data) => {
       useStore.getState().hydrate(data)
       off = platform.onVisibility((v) => useStore.getState().setOpen(v))
+      platform.onNotifyClick((id) => id && useStore.getState().reveal(id))
       platform.ready()
     })
     const flush = () => saveNow()
@@ -110,7 +138,7 @@ export default function App() {
       if (e.key !== 'Escape') return
       const s = useStore.getState()
       if (!s.open) return
-      if (s.editorId || s.panel) useStore.setState({ editorId: null, panel: null })
+      if (s.editorId || s.panel || s.catEdit) useStore.setState({ editorId: null, panel: null, catEdit: null })
       else dismiss()
     }
     window.addEventListener('keydown', onKey)
@@ -123,6 +151,7 @@ export default function App() {
     if (!hydrated) return
     let beats = 0
     const tick = () => {
+      announce(useStore.getState().runSchedule(Date.now()))
       const s = useStore.getState()
       const t = s.focusId ? s.tasks[s.focusId] : null
       let title = ''
@@ -134,6 +163,9 @@ export default function App() {
           platform.notify({ title: 'Time’s up', body: t.title })
         }
         title = rem <= 0 ? 'Time’s up' : `${isRunning(t) ? '' : '❙❙ '}${fmtClock(rem)}`
+      } else {
+        const due = Object.values(s.tasks).filter((x) => x.status === 'active' && x.routine?.fresh).length
+        if (due) title = `${due} due`
       }
       setTrayTitle(title)
       platform.setTrayTitle(title)

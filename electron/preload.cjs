@@ -14,4 +14,9 @@ contextBridge.exposeInMainWorld('vitro', {
   hidden: () => ipcRenderer.send('overlay:hidden'),
   setTrayTitle: (text) => ipcRenderer.send('tray:title', String(text || '')),
   notify: (payload) => ipcRenderer.send('notify', payload),
+  onNotifyClick: (cb) => {
+    const handler = (_event, id) => cb(id ? String(id) : null)
+    ipcRenderer.on('notify:click', handler)
+    return () => ipcRenderer.removeListener('notify:click', handler)
+  },
 })

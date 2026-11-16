@@ -1,21 +1,22 @@
 import { useMemo, useRef } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { useStore } from '../store'
-import { slotPositions, centerPoint, DROP_RADIUS } from '../lib/geometry'
+import { slotPositions, centerPoint, layoutCards, DROP_RADIUS } from '../lib/geometry'
 import { COMMIT_DISTANCE } from '../lib/physics'
 import { isApp } from '../lib/platform'
 import TaskBody from './TaskBody'
 import FX from './FX'
 import Dock from './Dock'
 import Editor from './Editor'
-import { LogPanel, HelpPanel, Toast } from './Panels'
+import { LogPanel, HelpPanel, RoutinesPanel, Toast } from './Panels'
+import Shelf from './Shelf'
 import { Mesh } from './Desktop'
 
 // Where the throw guides sit around the orb, as offsets from the center.
 const COMPASS = [
   { dir: 'done', label: 'Done', arrow: '↗', dx: 250, dy: -250 },
   { dir: 'snooze', label: 'Snooze', arrow: '←', dx: -345, dy: 0 },
-  { dir: 'cancel', label: 'Cancel', arrow: '↓', dx: 0, dy: 320 },
+  { dir: 'cancel', label: 'Cancel', skip: 'Skip', arrow: '↓', dx: 0, dy: 320 },
 ]
 
 export default function Overlay({ vp, onDismiss }) {
@@ -26,19 +27,34 @@ export default function Overlay({ vp, onDismiss }) {
   const intent = useStore((s) => s.throwIntent)
   const editorId = useStore((s) => s.editorId)
   const panel = useStore((s) => s.panel)
+  const view = useStore((s) => s.view)
+  const categories = useStore((s) => s.categories)
   const openedAt = useRef(performance.now()).current
+  const layoutRef = useRef({})
 
   const { W, H, top } = vp
   const slots = useMemo(() => slotPositions(W, H, top), [W, H, top])
   const c = centerPoint(W, H, top)
 
-  const visible = useMemo(
+  const catById = useMemo(() => Object.fromEntries(categories.map((c) => [c.id, c])), [categories])
+  const active = useMemo(
     () =>
       Object.values(tasks)
         .filter((t) => t.status === 'active')
         .sort((a, b) => a.slot - b.slot || a.createdAt - b.createdAt),
     [tasks],
   )
+  const inView = (t) => view === 'all' || t.categoryId === view || t.id === focusId
+  const visible = active.filter(inView)
+  // One layout pass for every card on screen, so nothing ever overlaps.
+  const layout = useMemo(() => {
+    const cards = active.filter((t) => t.id !== focusId && (view === 'all' || t.categoryId === view))
+    const reserved = active.filter((t) => t.id === focusId).map((t) => t.slot)
+    return layoutCards(cards, slots, { W, H, top, compact: view !== 'all', reserved })
+  }, [active, focusId, view, slots, W, H, top])
+  layoutRef.current = layout
+  const focusTask = focusId ? tasks[focusId] : null
+  const isRoutineFocus = !!focusTask?.repeat
   const draggingCard = draggingId && draggingId !== focusId
   const holdingOrb = draggingId && draggingId === focusId
 
@@ -52,7 +68,8 @@ export default function Overlay({ vp, onDismiss }) {
       transition={{ duration: 0.22 }}
       onPointerDown={(e) => {
         if (e.target === e.currentTarget) {
-          if (editorId || panel) useStore.setState({ editorId: null, panel: null })
+          const s = useStore.getState()
+          if (editorId || panel || s.catEdit) useStore.setState({ editorId: null, panel: null, catEdit: null })
           else onDismiss()
         }
       }}
@@ -100,7 +117,7 @@ export default function Overlay({ vp, onDismiss }) {
                   style={{ left: c.x + k.dx, top: c.y + k.dy }}
                 >
                   <span className="compass-arrow">{k.arrow}</span>
-                  {k.label}
+                  {isRoutineFocus && k.skip ? k.skip : k.label}
                   {active && intent.committed && <span className="compass-hint">Let go</span>}
                 </div>
               )
@@ -109,14 +126,31 @@ export default function Overlay({ vp, onDismiss }) {
         )}
       </AnimatePresence>
 
-      {!focusId && !draggingCard && (
+      {!focusId && !draggingCard && !editorId && !panel && (
         <div className="center-hint" style={{ left: c.x, top: c.y }}>
-          {visible.length ? 'Drag a task here to focus' : 'All clear. Add a task below.'}
+          {visible.length
+            ? 'Drag a task here to focus'
+            : view === 'all'
+              ? 'All clear. Add a task below.'
+              : `Nothing in ${catById[view]?.name ?? 'here'}. Add a task below.`}
         </div>
       )}
 
-      {visible.map((t, i) => (
-        <TaskBody key={t.id} task={t} order={i} vp={vp} slots={slots} openedAt={openedAt} />
+      <Shelf vp={vp} />
+
+      {active.map((t) => (
+        <TaskBody
+          key={t.id}
+          task={t}
+          order={Math.max(0, visible.indexOf(t))}
+          vp={vp}
+          home={layout[t.id] || null}
+          hidden={!inView(t)}
+          cat={catById[t.categoryId]}
+          showCat={view === 'all'}
+          layoutRef={layoutRef}
+          openedAt={openedAt}
+        />
       ))}
 
       <FX />
@@ -124,6 +158,7 @@ export default function Overlay({ vp, onDismiss }) {
       <AnimatePresence>
         {panel === 'log' && <LogPanel key="log" />}
         {panel === 'help' && <HelpPanel key="help" />}
+        {panel === 'routines' && <RoutinesPanel key="routines" />}
         {editorId && tasks[editorId] && <Editor key={editorId} task={tasks[editorId]} />}
       </AnimatePresence>
       <Toast />

@@ -1,12 +1,17 @@
 import { motion } from 'motion/react'
 import { useStore, MINUTE, MAX_STEPS } from '../store'
+import { whenLabel } from '../lib/schedule'
+import RepeatPicker from './RepeatPicker'
 
 const PRIORITIES = ['Low', 'Normal', 'Urgent']
 const PRESETS = [15, 25, 45, 60]
 
-/** Task sheet: title, priority (mass), focus length, and the steps shown under the orb. */
+/** Task sheet: title, category, priority (mass), focus length, repeat, and the steps shown under the orb. */
 export default function Editor({ task }) {
   const s = useStore.getState()
+  const categories = useStore((st) => st.categories)
+  const routine = task.repeat && task.routine
+  const waiting = task.status === 'scheduled'
   const minutes = Math.round(task.durationMs / MINUTE)
   const stop = (e) => e.stopPropagation()
 
@@ -33,6 +38,25 @@ export default function Editor({ task }) {
         onChange={(e) => s.updateTask(task.id, { title: e.target.value })}
         onBlur={(e) => !e.target.value.trim() && s.updateTask(task.id, { title: 'Untitled' })}
       />
+
+      <div className="sheet-row">
+        <span className="sheet-label">Category</span>
+        <div className="cat-pills" role="radiogroup" aria-label="Category">
+          {categories.map((c) => (
+            <button
+              key={c.id}
+              role="radio"
+              aria-checked={task.categoryId === c.id}
+              className={`cat-pill ${task.categoryId === c.id ? 'is-on' : ''}`}
+              style={{ '--h': c.hue }}
+              onClick={() => s.setCategory(task.id, c.id)}
+            >
+              <span className="cat-dot" />
+              {c.name}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="sheet-row">
         <span className="sheet-label">Priority</span>
@@ -71,6 +95,24 @@ export default function Editor({ task }) {
           min
         </label>
       </div>
+
+      <RepeatPicker value={task.repeat} onChange={(rule) => s.setRepeat(task.id, rule)} showHint={!routine} />
+      {routine && (
+        <div className="routine-stats">
+          {task.routine.streak > 0 ? (
+            <span className="flame-stat" title="Times in a row">
+              <Flame /> {task.routine.streak} in a row
+            </span>
+          ) : (
+            <span>Finish it to start a streak</span>
+          )}
+          {task.routine.best > 0 && <span>Best {Math.max(task.routine.best, task.routine.streak)}</span>}
+          <span className="flex-1" />
+          <span className={task.routine.carried ? 'meta-warn' : ''}>
+            {waiting ? `Next ${whenLabel(task.routine.due)}` : task.routine.carried ? 'Carried over' : task.routine.due > Date.now() ? `Early · counts for ${whenLabel(task.routine.due)}` : 'Due now'}
+          </span>
+        </div>
+      )}
 
       <div className="sheet-steps">
         <div className="sheet-label">
@@ -115,11 +157,28 @@ export default function Editor({ task }) {
       </div>
 
       <div className="sheet-foot">
-        <button className="btn btn-danger" onClick={() => s.resolve(task.id, 'cancelled')}>Cancel task</button>
+        {routine ? (
+          <button className="btn btn-danger" onClick={() => s.deleteTask(task.id)}>Delete routine</button>
+        ) : (
+          <button className="btn btn-danger" onClick={() => s.resolve(task.id, 'cancelled')}>Cancel task</button>
+        )}
         <span className="flex-1" />
-        <button className="btn" onClick={() => s.resolve(task.id, 'done')}>Mark done</button>
+        {waiting ? (
+          <button className="btn" onClick={() => s.doNow(task.id)}>Do it now</button>
+        ) : (
+          <>
+            {routine && <button className="btn" onClick={() => s.resolve(task.id, 'cancelled')}>Skip</button>}
+            <button className="btn" onClick={() => s.resolve(task.id, 'done')}>Mark done</button>
+          </>
+        )}
         <button className="btn btn-primary" onClick={() => s.setEditor(null)}>Close</button>
       </div>
     </motion.div>
   )
 }
+
+export const Flame = ({ size = 11 }) => (
+  <svg className="flame" width={size} height={size} viewBox="0 0 12 14" fill="currentColor" aria-hidden="true">
+    <path d="M6.3.5c.3 2.2-1 3.3-2 4.4C3.2 6 2 7.3 2 9.2A4 4 0 0 0 6 13.5a4 4 0 0 0 4-4.1c0-1.6-.8-2.8-1.6-3.6.1 1.3-.4 2.2-1.2 2.5.5-2.6-.2-5.8-.9-7.8Z" />
+  </svg>
+)

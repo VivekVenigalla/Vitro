@@ -43,6 +43,15 @@ export const platform = {
     api?.setTrayTitle(text)
   },
   notify(payload) {
-    api?.notify(payload)
+    if (api) return api.notify(payload)
+    // Browser preview: use web notifications when allowed.
+    try {
+      if (globalThis.Notification?.permission === 'granted') new globalThis.Notification(payload.title, { body: payload.body })
+    } catch {
+      /* not available */
+    }
+  },
+  onNotifyClick(cb) {
+    return api?.onNotifyClick ? api.onNotifyClick(cb) : () => {}
   },
 }

@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { motion, AnimatePresence, useMotionValue, useTransform, useVelocity, useSpring, animate, useDragControls } from 'motion/react'
 import { useStore, remainingOf, elapsedOf, isRunning, stepsDone } from '../store'
-import { CARD, ORB, DROP_RADIUS, fracToPx, pxToFrac, clampBox, centerPoint, nearestEdge } from '../lib/geometry'
+import { CARD, ORB, DROP_RADIUS, pxToFrac, clampBox, centerPoint, rectDist, findFreeSpot, SHELF } from '../lib/geometry'
 import { SPRING, massFor, withMass, classifyRelease, directionOf, releaseVelocity, COMMIT_DISTANCE } from '../lib/physics'
 import { sound } from '../lib/sound'
 import { fmtClock, fmtShort, useNow } from '../lib/time'
 import Liquid from './Liquid'
+import { bubbleCenter, bubbleAt } from './Shelf'
+import { RepeatIcon } from './Dock'
+import { Flame } from './Editor'
+import { PART_LABEL } from '../lib/schedule'
 
 const SHADOW = {
   rest: '0px 12px 32px -8px rgba(0,0,0,0.38), 0px 2px 6px 0px rgba(0,0,0,0.18)',
@@ -14,13 +18,14 @@ const SHADOW = {
   orb: '0px 30px 70px -14px rgba(0,0,0,0.55), 0px 6px 16px 0px rgba(0,0,0,0.22)',
 }
 const PRIORITY_LABEL = ['Low', 'Normal', 'Urgent']
+const TUCK = 0.22 // scale of a card tucked into its category bubble
 
 /**
  * One persistent element per task: a flat glass card on the periphery that
  * morphs into the Focus Orb when the task is focused, so the card ↔ orb
  * transition is a real geometry spring rather than a remount.
  */
-export default function TaskBody({ task, order, vp, slots, openedAt }) {
+export default function TaskBody({ task, order, vp, home: homeProp, hidden, cat, showCat, layoutRef, openedAt }) {
   const focused = useStore((s) => s.focusId === task.id)
   const intent = useStore((s) => (s.focusId === task.id ? s.throwIntent : null))
   const autoFinish = useStore((s) => s.autoFinish === task.id)
@@ -28,13 +33,13 @@ export default function TaskBody({ task, order, vp, slots, openedAt }) {
   const { W, H, top } = vp
   const c = centerPoint(W, H, top)
 
-  const home = useMemo(() => {
-    if (task.pos) {
-      const p = fracToPx(task.pos, CARD, W, H, top)
-      return { ...p, edge: nearestEdge(p.x, p.y, CARD, W, H, top) }
-    }
-    return slots[Math.min(Math.max(0, task.slot), slots.length - 1)]
-  }, [task.pos, task.slot, slots, W, H, top])
+  // Where this card's category bubble is: hidden cards are tucked inside it.
+  const bubbleBox = () => {
+    const b = bubbleCenter(task.categoryId) || { x: W / 2, y: top + SHELF.y + SHELF.h / 2 }
+    return { x: b.x - CARD.w / 2, y: b.y - CARD.h / 2 }
+  }
+  const home = homeProp || { ...bubbleBox(), edge: 'top' }
+  const tucked = hidden && !focused
 
   const target = focused
     ? { x: c.x - ORB.d / 2, y: c.y - ORB.d / 2, w: ORB.d, h: ORB.d, r: ORB.d / 2 }
@@ -44,7 +49,9 @@ export default function TaskBody({ task, order, vp, slots, openedAt }) {
   const init = useRef(null)
   if (!init.current) {
     const entering = performance.now() - openedAt < 200
-    if (entering && !focused) {
+    if (tucked) {
+      init.current = { kind: 'tucked', x: home.x, y: home.y, op: 0, lift: TUCK }
+    } else if (entering && !focused) {
       const off = { x: target.x, y: target.y }
       if (home.edge === 'left') off.x = -CARD.w - 60
       else if (home.edge === 'right') off.x = W + 60
@@ -77,10 +84,13 @@ export default function TaskBody({ task, order, vp, slots, openedAt }) {
   const first = useRef(true)
   const prevFocused = useRef(focused)
   const samples = useRef([])
+  const overBubble = useRef(false)
   const [lifted, setLifted] = useState(false)
   const [hover, setHover] = useState(false)
   const [gone, setGone] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [parked, setParked] = useState(i0.kind === 'tucked')
+  const prevTucked = useRef(tucked)
   const dragControls = useDragControls()
 
   const settle = (tr) => {
@@ -91,9 +101,38 @@ export default function TaskBody({ task, order, vp, slots, openedAt }) {
     animate(r, target.r, tr)
   }
 
-  // Follow the target: entrance cascade, card ↔ orb morph, glides and resizes.
+  // Follow the target: entrance cascade, card ↔ orb morph, glides and resizes,
+  // and tucking into / fanning out of the category bubble.
   useEffect(() => {
     if (exiting.current || dragging.current) return
+    const wasTucked = prevTucked.current
+    prevTucked.current = tucked
+    if (tucked) {
+      first.current = false
+      prevFocused.current = focused
+      const b = bubbleBox()
+      const tr = { type: 'spring', stiffness: 300, damping: 30 }
+      animate(x, b.x, tr)
+      animate(y, b.y, tr)
+      animate(lift, TUCK, tr)
+      animate(op, 0, { duration: 0.22, delay: 0.06 }).then(() => prevTucked.current && setParked(true))
+      return
+    }
+    if (wasTucked) {
+      // Fan out from the bubble.
+      setParked(false)
+      const b = bubbleBox()
+      x.set(b.x)
+      y.set(b.y)
+      lift.set(TUCK)
+      const delay = 0.03 + order * 0.035
+      animate(op, 1, { duration: 0.25, delay })
+      animate(lift, 1, { ...SPRING.lift, delay })
+      first.current = false
+      prevFocused.current = focused
+      settle({ ...withMass(SPRING.cascade, mass), delay })
+      return
+    }
     let tr
     if (first.current) {
       const delay = i0.kind === 'enter' ? 0.06 + order * 0.045 : 0
@@ -109,7 +148,7 @@ export default function TaskBody({ task, order, vp, slots, openedAt }) {
     prevFocused.current = focused
     settle(tr)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target.x, target.y, target.w, target.h, focused])
+  }, [target.x, target.y, target.w, target.h, focused, tucked])
 
   // ----- triage outcomes -----
   const orbCenter = () => ({ x: x.get() + w.get() / 2, y: y.get() + h.get() / 2 })
@@ -192,12 +231,22 @@ export default function TaskBody({ task, order, vp, slots, openedAt }) {
       return
     }
     const p = orbCenter()
-    store.setDropHot(Math.hypot(p.x - c.x, p.y - c.y) < DROP_RADIUS)
+    const over = bubbleAt(info.point.x, info.point.y)
+    // Over a bubble the card shrinks, as if about to be absorbed, so the lit bubble stays visible.
+    const shrink = !!over && over !== task.categoryId
+    if (shrink !== overBubble.current) {
+      overBubble.current = shrink
+      animate(lift, shrink ? 0.42 : 1.06, SPRING.lift)
+    }
+    store.setDropCat(shrink ? over : null)
+    store.setDropHot(!over && Math.hypot(p.x - c.x, p.y - c.y) < DROP_RADIUS)
   }
   const onDragEnd = (_e, info) => {
     dragging.current = false
+    overBubble.current = false
     setLifted(false)
     const store = useStore.getState()
+    const dropCat = !focused ? bubbleAt(info.point.x, info.point.y) : null
     store.setDragging(null)
     animate(lift, 1, SPRING.lift)
     if (exiting.current) return
@@ -210,6 +259,16 @@ export default function TaskBody({ task, order, vp, slots, openedAt }) {
       else if (outcome === 'cancel') finishCancel()
       else if (outcome === 'snooze') finishSnooze()
       else settle(withMass(SPRING.morph, mass))
+      return
+    }
+    // Dropped on a category bubble: file it there. It flies into the bubble
+    // when that category is not on screen, or back to its spot when it is.
+    if (dropCat) {
+      if (dropCat !== task.categoryId) {
+        sound.latch()
+        store.setCategory(task.id, dropCat)
+      }
+      settle(withMass(SPRING.lift, mass))
       return
     }
     const p = orbCenter()
@@ -227,7 +286,13 @@ export default function TaskBody({ task, order, vp, slots, openedAt }) {
       nx = x.get()
       ny = y.get()
     }
-    const q = clampBox(nx, ny, CARD, W, H, top)
+    let q = clampBox(nx, ny, CARD, W, H, top)
+    // Never land on top of another card: slide to the nearest open space.
+    const others = Object.entries(layoutRef?.current || {})
+      .filter(([id]) => id !== task.id)
+      .map(([, b]) => ({ x: b.x, y: b.y, w: CARD.w, h: CARD.h }))
+    const me = { x: q.x, y: q.y, w: CARD.w, h: CARD.h }
+    if (others.some((o) => rectDist(me, o) < 8)) q = findFreeSpot(q.x, q.y, others, W, H, top) || q
     store.setPos(task.id, pxToFrac(q.x, q.y, CARD, W, H))
   }
 
@@ -247,6 +312,7 @@ export default function TaskBody({ task, order, vp, slots, openedAt }) {
   }
   const onHover = (on) => {
     setHover(on)
+    if (on && fresh) useStore.getState().markSeen(task.id)
     if (!dragging.current && !exiting.current && !focused) animate(lift, on ? 1.025 : 1, SPRING.lift)
   }
 
@@ -258,14 +324,30 @@ export default function TaskBody({ task, order, vp, slots, openedAt }) {
   const expired = remaining <= 0
   const done = stepsDone(task)
   const total = task.subtasks.length
+  const routine = task.repeat && task.routine
+  const fresh = !!routine?.fresh
 
   const shadow = lifted ? SHADOW.lifted : focused ? SHADOW.orb : hover ? SHADOW.hover : SHADOW.rest
   return (
     <motion.div
-      className="absolute left-0 top-0"
+      className={`absolute left-0 top-0 ${parked ? 'is-parked' : ''}`}
       data-task={task.id}
       data-kind={focused ? 'orb' : 'card'}
-      style={{ x, y, width: w, height: h, rotate, rotateX, transformPerspective: 900, zIndex: lifted ? 60 : focused ? 30 : 10, touchAction: 'none' }}
+      data-hidden={tucked ? '1' : undefined}
+      aria-hidden={tucked || undefined}
+      style={{
+        x,
+        y,
+        width: w,
+        height: h,
+        rotate,
+        rotateX,
+        transformPerspective: 900,
+        zIndex: lifted ? 60 : focused ? 30 : tucked ? 5 : 10 + (homeProp?.deck || 0),
+        touchAction: 'none',
+        pointerEvents: tucked ? 'none' : undefined,
+        '--h': cat?.hue ?? 250,
+      }}
       drag
       dragControls={dragControls}
       dragListener={false}
@@ -285,12 +367,18 @@ export default function TaskBody({ task, order, vp, slots, openedAt }) {
           animate={{ boxShadow: shadow }}
           transition={SPRING.lift}
         />
+        {fresh && !focused && <div className="due-pulse" style={{ borderRadius: CARD.r }} />}
+        {!focused && !tucked && homeProp?.deck === homeProp?.deckSize && homeProp?.deck > 0 && (
+          <div className="deck-badge" title="The screen is full. Open a category bubble to see fewer at a time.">
+            +{homeProp.deckSize} more
+          </div>
+        )}
         {focused && (
           <div className={`orb-glow ${intent ? `is-${intent.dir}` : ''} ${intent?.committed ? 'is-committed' : ''}`} />
         )}
 
         <motion.div
-          className={`glass backdrop-blur-3xl ${focused ? 'glass-orb' : 'glass-card'} ${lifted ? 'is-lifted' : ''}`}
+          className={`glass backdrop-blur-3xl ${focused ? 'glass-orb' : 'glass-card has-cat'} ${lifted ? 'is-lifted' : ''} ${!focused && homeProp?.deck && homeProp.deck < homeProp.deckSize ? 'is-deck-under' : ''}`}
           style={{ borderRadius: r, opacity: op }}
           onPointerDown={onPointerDown}
           onPointerEnter={() => onHover(true)}
@@ -308,6 +396,18 @@ export default function TaskBody({ task, order, vp, slots, openedAt }) {
                 <div className="orb-state">
                   {expired ? 'Time’s up' : running ? 'Focusing' : 'Paused · click to resume'}
                 </div>
+                {routine && (
+                  <div className="orb-routine">
+                    <RepeatIcon size={11} />
+                    {routine.streak > 0 ? (
+                      <>
+                        <Flame size={10} /> {routine.streak} in a row
+                      </>
+                    ) : (
+                      'Routine'
+                    )}
+                  </div>
+                )}
               </div>
             </motion.div>
           ) : (
@@ -326,14 +426,32 @@ export default function TaskBody({ task, order, vp, slots, openedAt }) {
                 </button>
               </div>
               <div className="meta flex items-center gap-2 pl-[18px]">
-                <span className={expired ? 'meta-warn' : ''}>
-                  {expired ? 'Time’s up' : task.timer.elapsedMs > 0 ? `${fmtShort(remaining)} left` : fmtShort(task.durationMs)}
-                </span>
-                {total > 0 && (
-                  <span className="steps">
-                    {done}/{total} steps
+                {routine?.carried ? (
+                  <span className="meta-warn" title="Not done last time, so it carried over">Carried over</span>
+                ) : (
+                  <span className={expired ? 'meta-warn' : ''}>
+                    {expired ? 'Time’s up' : task.timer.elapsedMs > 0 ? `${fmtShort(remaining)} left` : fmtShort(task.durationMs)}
                   </span>
                 )}
+                {total > 0 && (
+                  <span className="steps">
+                    {done}/{total}
+                  </span>
+                )}
+                {routine && (
+                  <span className={`routine-tag ${fresh ? 'is-fresh' : ''}`} title={`Routine · ${task.repeat.time ? 'exact time' : PART_LABEL[task.repeat.part]}${routine.streak ? ` · ${routine.streak} in a row` : ''}`}>
+                    <RepeatIcon size={11} />
+                    {routine.streak > 0 ? (
+                      <>
+                        <Flame size={9} />
+                        {routine.streak}
+                      </>
+                    ) : fresh ? (
+                      'Due'
+                    ) : null}
+                  </span>
+                )}
+                {showCat && cat && <span className="cat-tag">{cat.name}</span>}
               </div>
               {(task.timer.elapsedMs > 0 || done > 0) && (
                 <div className="card-progress" aria-hidden="true">
@@ -364,7 +482,9 @@ export default function TaskBody({ task, order, vp, slots, openedAt }) {
               <span className="sep" />
               <button className="ctl-done" title="Done — or throw the orb up or right" onClick={() => finishDone({ x: 1500, y: -900 })}>Done</button>
               <button title="Snooze — or throw the orb left" onClick={finishSnooze}>Snooze</button>
-              <button className="ctl-cancel" title="Cancel — or throw the orb down" onClick={finishCancel}>Cancel</button>
+              <button className="ctl-cancel" title={routine ? 'Skip this time — or throw the orb down' : 'Cancel — or throw the orb down'} onClick={finishCancel}>
+                {routine ? 'Skip' : 'Cancel'}
+              </button>
             </div>
             {total > 0 && (
               <ul className="orb-steps" aria-label="Steps">

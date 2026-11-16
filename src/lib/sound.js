@@ -77,6 +77,11 @@ export const sound = {
   whoosh() {
     noise({ dur: 0.22, gain: 0.04, freq: 1400, q: 0.6 })
   },
+  /** A routine came due: soft two-note nudge. */
+  nudge() {
+    tone({ freq: 659.25, dur: 0.4, gain: 0.05 })
+    tone({ freq: 987.77, at: 0.16, dur: 0.6, gain: 0.045 })
+  },
   /** Card latched into the focus zone. */
   latch() {
     tone({ freq: 520, to: 780, dur: 0.14, gain: 0.05 })

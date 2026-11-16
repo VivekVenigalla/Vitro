@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { classifyThrow, classifyRelease, directionOf, releaseVelocity, massFor, withMass, SPRING, COMMIT_DISTANCE } from '../src/lib/physics'
-import { slotPositions, rectDist, centerPoint, CARD, DROP_RADIUS, fracToPx, pxToFrac } from '../src/lib/geometry'
+import { slotPositions, rectDist, centerPoint, CARD, DROP_RADIUS, fracToPx, pxToFrac, layoutCards, pxToFrac as toFrac } from '../src/lib/geometry'
 import { useStore, sanitize, remainingOf, MINUTE } from '../src/store'
+import { nextOccurrence, prevOccurrence, cleanRepeat, describeRepeat, EVERY_DAY, WEEKDAYS, DEFAULT_PART_TIMES } from '../src/lib/schedule'
 
 const polar = (deg, mag) => [Math.cos((deg * Math.PI) / 180) * mag, Math.sin((deg * Math.PI) / 180) * mag]
 
@@ -129,15 +130,20 @@ describe('store', () => {
     S().hydrate(null)
   })
 
-  it('seeds example tasks with unique slots on first run', () => {
+  it('seeds example tasks with unique slots and one example routine on first run', () => {
     const tasks = Object.values(S().tasks)
-    expect(tasks.length).toBe(5)
-    expect(new Set(tasks.map((t) => t.slot)).size).toBe(5)
+    expect(tasks.length).toBe(6)
+    expect(new Set(tasks.map((t) => t.slot)).size).toBe(6)
+    expect(tasks.filter((t) => t.repeat).length).toBe(1)
+    expect(S().categories.map((c) => c.name)).toEqual(['School', 'Work', 'Misc'])
   })
   it('adds a task in the lowest free slot and rejects blank titles', () => {
     expect(S().addTask({ title: '   ' })).toBeNull()
+    const used = new Set(Object.values(S().tasks).filter((t) => t.status === 'active').map((t) => t.slot))
+    let free = 0
+    while (used.has(free)) free++
     const id = S().addTask({ title: 'Write tests', priority: 2, durationMs: 15 * MINUTE })
-    expect(S().tasks[id].slot).toBe(5)
+    expect(S().tasks[id].slot).toBe(free)
     expect(S().tasks[id].priority).toBe(2)
   })
   it('runs, pauses and resumes the focus timer', () => {
@@ -236,5 +242,235 @@ describe('store', () => {
     expect(clean.tasks.a.slot).not.toBe(clean.tasks.b.slot)
     expect(sanitize(null)).toBeNull()
     expect(sanitize({ tasks: 'nope' })).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Overlap-free layout
+// ---------------------------------------------------------------------------
+describe('layoutCards', () => {
+  const W = 1440
+  const H = 900
+  const top = 0
+  const slots = slotPositions(W, H, top)
+  const boxes = (out) => Object.values(out).map((p) => ({ x: p.x, y: p.y, w: CARD.w, h: CARD.h }))
+  const noOverlap = (out) => {
+    const b = boxes(out)
+    for (let i = 0; i < b.length; i++) for (let j = i + 1; j < b.length; j++) expect(rectDist(b[i], b[j])).toBeGreaterThan(0)
+  }
+  const task = (id, slot, extra = {}) => ({ id, slot, createdAt: slot, pos: null, ...extra })
+
+  it('a new card never lands under a card that was dragged onto its slot', () => {
+    const s0 = slots[0]
+    const moved = task('moved', 3, { pos: toFrac(s0.x + 10, s0.y + 4, CARD, W, H) })
+    const fresh = task('fresh', 0)
+    const out = layoutCards([moved, fresh], slots, { W, H, top })
+    noOverlap(out)
+    expect(out.fresh).not.toEqual(slots[0])
+  })
+  it('more cards than fit: open space first, then a tidy deck, never a random pile', () => {
+    const many = Array.from({ length: slots.length + 30 }, (_, i) => task('t' + i, i))
+    const out = layoutCards(many, slots, { W, H, top })
+    expect(Object.keys(out).length).toBe(many.length)
+    const loose = Object.fromEntries(Object.entries(out).filter(([, p]) => !p.deck))
+    noOverlap(loose)
+    const deck = Object.values(out).filter((p) => p.deck)
+    expect(deck.length).toBeGreaterThan(0)
+    expect(deck.every((p) => p.deckSize === deck.length)).toBe(true)
+  })
+  it('a few extra cards find open space before any deck is needed', () => {
+    const many = Array.from({ length: slots.length + 2 }, (_, i) => task('t' + i, i))
+    const out = layoutCards(many, slots, { W, H, top })
+    expect(Object.values(out).some((p) => p.deck)).toBe(false)
+    noOverlap(out)
+  })
+  it('duplicate slot numbers are spread out', () => {
+    const out = layoutCards([task('a', 2), task('b', 2), task('c', 2)], slots, { W, H, top })
+    noOverlap(out)
+  })
+  it('compact mode packs a category into the first slots', () => {
+    const out = layoutCards([task('a', 7), task('b', 9)], slots, { W, H, top, compact: true })
+    expect(out.a).toEqual(slots[0])
+    expect(out.b).toEqual(slots[1])
+  })
+  it('the focused task keeps its slot reserved', () => {
+    const out = layoutCards([task('b', 5), task('c', 0)], slots, { W, H, top, reserved: [0] })
+    expect(out.c).not.toEqual(slots[0])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Routine schedule math
+// ---------------------------------------------------------------------------
+describe('schedule', () => {
+  const at = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min).getTime()
+  const P = DEFAULT_PART_TIMES
+  const daily = { days: EVERY_DAY, part: 'evening', time: null }
+
+  it('uses the start of the part of day, or the exact time', () => {
+    expect(nextOccurrence(daily, at(2026, 11, 16, 9), P)).toBe(at(2026, 11, 16, 18))
+    expect(nextOccurrence({ ...daily, time: '21:30' }, at(2026, 11, 16, 9), P)).toBe(at(2026, 11, 16, 21, 30))
+    expect(nextOccurrence(daily, at(2026, 11, 16, 18), P)).toBe(at(2026, 11, 17, 18)) // strictly after
+    expect(prevOccurrence(daily, at(2026, 11, 16, 18), P)).toBe(at(2026, 11, 16, 18)) // at or before
+    expect(prevOccurrence(daily, at(2026, 11, 16, 9), P)).toBe(at(2026, 11, 15, 18))
+  })
+  it('weekdays skip the weekend', () => {
+    const wk = { days: WEEKDAYS, part: 'morning', time: null }
+    // 2026-11-20 is a Friday
+    expect(nextOccurrence(wk, at(2026, 11, 20, 9), P)).toBe(at(2026, 11, 23, 8))
+    expect(prevOccurrence(wk, at(2026, 11, 22, 12), P)).toBe(at(2026, 11, 20, 8))
+  })
+  it('follows custom part-of-day times', () => {
+    expect(nextOccurrence(daily, at(2026, 11, 16, 9), { ...P, evening: '19:15' })).toBe(at(2026, 11, 16, 19, 15))
+  })
+  it('cleans rules and describes them', () => {
+    expect(cleanRepeat({ days: [], part: 'evening' })).toBeNull()
+    expect(cleanRepeat({ days: [9, 1, 1], part: 'nope', time: '25:00' })).toEqual({ days: [1], part: 'morning', time: null })
+    expect(describeRepeat({ days: EVERY_DAY, part: 'evening', time: null })).toBe('Every day · Evening')
+    expect(describeRepeat({ days: WEEKDAYS, part: 'evening', time: '21:30' })).toBe('Weekdays · 9:30 PM')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Routines and categories in the store
+// ---------------------------------------------------------------------------
+describe('routines', () => {
+  const S = () => useStore.getState()
+  const at = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min).getTime()
+  const daily = { days: [0, 1, 2, 3, 4, 5, 6], part: 'evening', time: null }
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(at(2026, 11, 16, 9))
+    useStore.setState({ tasks: {}, focusId: null, toast: null, fx: [], autoFinish: null, throwIntent: null, hydrated: false, view: 'all' })
+    S().hydrate({ tasks: {}, categories: null })
+  })
+
+  it('a routine added before its time waits, then appears with a notification event', () => {
+    const id = S().addTask({ title: 'LeetCode', categoryId: 'school', repeat: daily })
+    expect(S().tasks[id].status).toBe('scheduled')
+    expect(S().toast.text).toContain('Today 6:00 PM')
+    expect(S().runSchedule(at(2026, 11, 16, 17, 59))).toEqual([])
+    const ev = S().runSchedule(at(2026, 11, 16, 18, 0))
+    expect(ev).toEqual([{ id, kind: 'due', late: false }])
+    expect(S().tasks[id].status).toBe('active')
+    expect(S().tasks[id].routine.fresh).toBe(true)
+    expect(S().runSchedule(at(2026, 11, 16, 18, 1))).toEqual([]) // only once
+  })
+  it('a routine added after today\'s time is due right away', () => {
+    vi.setSystemTime(at(2026, 11, 16, 20))
+    const id = S().addTask({ title: 'LeetCode', repeat: daily })
+    expect(S().tasks[id].status).toBe('active')
+  })
+  it('finishing logs the occurrence, grows the streak and waits for the next one', () => {
+    vi.setSystemTime(at(2026, 11, 16, 20))
+    const id = S().addTask({ title: 'LeetCode', repeat: daily })
+    S().focus(id)
+    expect(S().resolve(id, 'done')).toBe(true)
+    const t = S().tasks[id]
+    expect(t.status).toBe('scheduled')
+    expect(t.routine.streak).toBe(1)
+    expect(t.routine.due).toBe(at(2026, 11, 17, 18))
+    const logged = Object.values(S().tasks).filter((x) => x.routineOf === id)
+    expect(logged.length).toBe(1)
+    expect(logged[0].status).toBe('done')
+    // next day
+    S().runSchedule(at(2026, 11, 17, 18))
+    vi.setSystemTime(at(2026, 11, 17, 19))
+    S().resolve(id, 'done')
+    expect(S().tasks[id].routine.streak).toBe(2)
+    expect(S().toast.text).toContain('2 in a row')
+  })
+  it('an unfinished routine carries over without duplicating and resets the streak', () => {
+    vi.setSystemTime(at(2026, 11, 16, 20))
+    const id = S().addTask({ title: 'LeetCode', repeat: daily })
+    useStore.setState({ tasks: { ...S().tasks, [id]: { ...S().tasks[id], routine: { ...S().tasks[id].routine, streak: 4 } } } })
+    const ev = S().runSchedule(at(2026, 11, 17, 18, 5))
+    expect(ev).toEqual([{ id, kind: 'carried', late: false }])
+    const t = S().tasks[id]
+    expect(t.routine.carried).toBe(true)
+    expect(t.routine.streak).toBe(0)
+    expect(t.routine.due).toBe(at(2026, 11, 17, 18))
+    expect(Object.values(S().tasks).filter((x) => x.title === 'LeetCode').length).toBe(1)
+  })
+  it('days missed while the Mac was off are announced as late', () => {
+    const id = S().addTask({ title: 'LeetCode', repeat: daily })
+    const ev = S().runSchedule(at(2026, 11, 19, 10))
+    expect(ev).toEqual([{ id, kind: 'carried', late: true }])
+    expect(S().tasks[id].routine.due).toBe(at(2026, 11, 18, 18))
+  })
+  it('skipping resets the streak; restoring from the log brings the occurrence back', () => {
+    vi.setSystemTime(at(2026, 11, 16, 20))
+    const id = S().addTask({ title: 'LeetCode', repeat: daily })
+    S().resolve(id, 'done')
+    S().runSchedule(at(2026, 11, 17, 18))
+    vi.setSystemTime(at(2026, 11, 17, 19))
+    S().resolve(id, 'cancelled')
+    expect(S().tasks[id].routine.streak).toBe(0)
+    const skipped = Object.values(S().tasks).find((x) => x.routineOf === id && x.status === 'cancelled')
+    S().restore(skipped.id)
+    expect(S().tasks[skipped.id]).toBeUndefined()
+    expect(S().tasks[id].status).toBe('active')
+    expect(S().tasks[id].routine.streak).toBe(1)
+  })
+  it('do-now brings a waiting routine out early and it counts for that occurrence', () => {
+    const id = S().addTask({ title: 'LeetCode', repeat: daily })
+    S().doNow(id)
+    expect(S().tasks[id].status).toBe('active')
+    expect(S().runSchedule(at(2026, 11, 16, 18, 1))).toEqual([]) // not treated as missed
+    S().resolve(id, 'done')
+    expect(S().tasks[id].routine.due).toBe(at(2026, 11, 17, 18))
+  })
+  it('turning repeat off makes it a normal task again; clearing the log keeps routines', () => {
+    const id = S().addTask({ title: 'LeetCode', repeat: daily })
+    S().clearLog()
+    expect(S().tasks[id]).toBeDefined()
+    S().setRepeat(id, null)
+    expect(S().tasks[id].status).toBe('active')
+    expect(S().tasks[id].repeat).toBeNull()
+  })
+  it('changing part-of-day times moves waiting routines', () => {
+    const id = S().addTask({ title: 'LeetCode', repeat: daily })
+    S().setPartTimes({ evening: '19:30' })
+    expect(S().tasks[id].routine.due).toBe(at(2026, 11, 16, 19, 30))
+  })
+})
+
+describe('categories', () => {
+  const S = () => useStore.getState()
+  beforeEach(() => {
+    useStore.setState({ tasks: {}, focusId: null, toast: null, hydrated: false, view: 'all' })
+    S().hydrate({ tasks: {} })
+  })
+  it('new tasks go into the open category', () => {
+    S().setView('work')
+    const id = S().addTask({ title: 'Ship it' })
+    expect(S().tasks[id].categoryId).toBe('work')
+  })
+  it('adds, renames and removes categories; removed tasks move to Misc and undo brings it back', () => {
+    const cid = S().addCategory('Gym')
+    expect(S().view).toBe(cid)
+    const id = S().addTask({ title: 'Leg day' })
+    expect(S().tasks[id].categoryId).toBe(cid)
+    S().updateCategory(cid, { name: 'Fitness' })
+    expect(S().categories.find((c) => c.id === cid).name).toBe('Fitness')
+    S().removeCategory(cid)
+    expect(S().tasks[id].categoryId).toBe('misc')
+    expect(S().view).toBe('all')
+    S().undo()
+    expect(S().categories.some((c) => c.id === cid)).toBe(true)
+    expect(S().tasks[id].categoryId).toBe(cid)
+  })
+  it('never removes the last category and caps at eight', () => {
+    for (let i = 0; i < 10; i++) S().addCategory('C' + i)
+    expect(S().categories.length).toBe(8)
+    for (const c of [...S().categories]) S().removeCategory(c.id)
+    expect(S().categories.length).toBe(1)
+  })
+  it('sanitize files unknown categories under Misc and keeps v2 data loading', () => {
+    const clean = sanitize({ tasks: { a: { id: 'a', title: 'A', categoryId: 'ghost' }, b: { id: 'b', title: 'B' } }, view: 'ghost' })
+    expect(clean.tasks.a.categoryId).toBe('misc')
+    expect(clean.tasks.b.categoryId).toBe('misc')
+    expect(clean.view).toBe('all')
+    expect(clean.categories.length).toBe(3)
   })
 })
